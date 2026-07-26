@@ -1,3 +1,4 @@
+from app.schemas.anomaly import AnomalyScore
 from app.schemas.features import AccountFeatures
 from app.schemas.plan import ExecutionPlan, ExecutionStep, ToolName
 from app.schemas.query import AMLPattern, ParsedIntent, QueryFilters
@@ -13,6 +14,7 @@ __all__ = [
     "AMLPattern",
     "AccountFeatures",
     "AgentResponse",
+    "AnomalyScore",
     "ExecutionPlan",
     "ExecutionStep",
     "FlaggedItem",
