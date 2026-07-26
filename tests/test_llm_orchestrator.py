@@ -86,6 +86,40 @@ def test_multi_step_pipeline_threads_data_between_real_tool_calls():
     assert len(orchestrator._pipeline_state["account_features"]) == 9
 
 
+def test_relative_date_filters_do_not_trigger_fallback():
+    """Regression test: some LLM providers (esp. smaller/cheaper models like
+    Groq's llama-3.3-70b) sometimes return relative phrases such as
+    'today' or '30 days ago' for a date filter instead of computing an
+    ISO date, which used to raise a pydantic ValidationError and silently
+    drop the whole query into rule-based fallback mode."""
+    client = ScriptedClient(
+        [
+            fake_response(
+                [
+                    tool_use_block(
+                        "feature_engineering_tool",
+                        {
+                            "reason": "broad query",
+                            "filters": {
+                                "start_date": "30 days ago",
+                                "end_date": "today",
+                            },
+                        },
+                        "t1",
+                    )
+                ]
+            ),
+            fake_response([text_block("Analyzed last 30 days.")]),
+        ]
+    )
+    orchestrator = _make_orchestrator(client)
+    result = orchestrator.handle_query("Show suspicious activity from the last 30 days")
+
+    assert result.execution_summary == "Analyzed last 30 days."
+    assert result.supporting_metrics["used_fallback"] is False
+    assert "fallback_reason" not in result.supporting_metrics
+
+
 def test_stops_after_max_turns_if_no_final_answer():
     client = ScriptedClient(
         [

@@ -12,6 +12,7 @@ unreliable.
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 
 from app.agents.base_orchestrator import BaseOrchestrator
@@ -20,7 +21,12 @@ from app.config import settings
 from app.schemas import AgentResponse, ToolName
 from app.services.data_loader import DataStore
 
-SYSTEM_PROMPT = """You are an AML (Anti-Money Laundering) investigation agent.
+SYSTEM_PROMPT_TEMPLATE = """You are an AML (Anti-Money Laundering) investigation agent.
+
+Today's date is {today}. When a query mentions a relative time window
+(e.g. "last 30 days", "this month", "since last week"), compute the exact
+start_date/end_date yourself and pass them as ISO dates (YYYY-MM-DD) —
+never pass phrases like "30 days ago" or "today" literally into a filter.
 
 You have access to a set of tools for analyzing financial transactions. You
 must NOT run every tool for every query — decide which tools are actually
@@ -70,7 +76,7 @@ class LLMOrchestrator(BaseOrchestrator):
             response = self._client.messages.create(
                 model=self._model,
                 max_tokens=1500,
-                system=SYSTEM_PROMPT,
+                system=SYSTEM_PROMPT_TEMPLATE.format(today=date.today().isoformat()),
                 tools=get_anthropic_tool_schemas(),
                 messages=messages,
             )

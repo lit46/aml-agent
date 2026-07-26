@@ -17,6 +17,77 @@ from app.services.data_loader import DataStore
 
 st.set_page_config(page_title="Sentinel AML", page_icon="🕵️", layout="wide")
 
+# Investigation-terminal theme: ink background, signal-amber accent, risk
+# tiers colour-coded consistently across the summary and the data table.
+# Base dark/amber palette lives in .streamlit/config.toml; this layers on
+# typography, section framing, and risk colour-coding that Streamlit's
+# theme config alone can't express.
+THEME_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
+
+/* Title block + signature scan-line */
+h1#sentinel-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.1rem;
+}
+.sentinel-scanline {
+    height: 3px;
+    width: 100%;
+    margin: 0.4rem 0 1.2rem 0;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #E8A33D 0%, rgba(232,163,61,0.15) 55%, rgba(232,163,61,0) 100%);
+}
+
+/* Section headers get a terminal-style accent bar + small caps */
+h2, h3 {
+    font-family: 'IBM Plex Mono', monospace !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 1.05rem !important;
+    border-left: 3px solid #E8A33D;
+    padding-left: 0.6rem;
+    margin-top: 1.6rem !important;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    border-right: 1px solid rgba(232,163,61,0.25);
+}
+section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2 {
+    font-family: 'IBM Plex Mono', monospace !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.95rem !important;
+    color: #E8A33D;
+    border-left: none;
+    padding-left: 0;
+}
+
+/* Buttons */
+.stButton > button[kind="primary"] {
+    background-color: #E8A33D;
+    color: #0B0F14;
+    font-weight: 600;
+    border: none;
+    letter-spacing: 0.02em;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #F5B85A;
+    color: #0B0F14;
+}
+
+/* Data / monospace surfaces */
+[data-testid="stDataFrame"] { font-family: 'IBM Plex Mono', monospace; }
+</style>
+"""
+
+_RISK_DOT = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢"}
+
 PROVIDER_OPTIONS = ["Anthropic (Claude)", *KNOWN_PROVIDERS.keys(), "Custom OpenAI-compatible"]
 
 
@@ -42,14 +113,23 @@ def render_flagged_items(flagged_items: list[FlaggedItem]) -> None:
     rows = [
         {
             "Account": item.entity_id,
-            "Risk": item.risk_level.value,
+            "Risk": f"{_RISK_DOT.get(item.risk_level.value, '')} {item.risk_level.value}",
             "Score": round(item.risk_score, 2),
             "Action": item.recommended_action.value,
             "Explanation": item.explanation,
         }
         for item in flagged_items
     ]
-    st.dataframe(rows, width='stretch')
+    st.dataframe(
+        rows,
+        width="stretch",
+        column_config={
+            "Risk": st.column_config.TextColumn("Risk", help="Risk tier assigned by risk_classification_tool"),
+            "Score": st.column_config.ProgressColumn(
+                "Score", min_value=0.0, max_value=1.0, format="%.2f"
+            ),
+        },
+    )
 
 
 def render_result(result: AgentResponse) -> None:
@@ -74,7 +154,9 @@ def render_result(result: AgentResponse) -> None:
 
 
 def main() -> None:
-    st.title("🕵️ Sentinel AML")
+    st.markdown(THEME_CSS, unsafe_allow_html=True)
+    st.markdown('<h1 id="sentinel-title">🕵️ SENTINEL AML</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="sentinel-scanline"></div>', unsafe_allow_html=True)
     st.caption(
         "AI-Powered Suspicious Activity Detection — dynamically orchestrates "
         "feature engineering and anomaly detection tools based on natural "

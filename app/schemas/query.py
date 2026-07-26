@@ -6,10 +6,67 @@ asking for, in a structured form the planner can reason about.
 
 from __future__ import annotations
 
-from datetime import date
+import re
+from datetime import date, datetime, timedelta
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from dateutil import parser as dateutil_parser
+from pydantic import BaseModel, Field, field_validator
+
+_RELATIVE_UNIT_DAYS = {
+    "day": 1,
+    "days": 1,
+    "week": 7,
+    "weeks": 7,
+    "month": 30,
+    "months": 30,
+    "year": 365,
+    "years": 365,
+}
+
+_RELATIVE_PATTERN = re.compile(
+    r"^\s*(\d+)\s*(day|days|week|weeks|month|months|year|years)\s*ago\s*$",
+    re.IGNORECASE,
+)
+
+
+def _coerce_to_date(value: object) -> object:
+    """Best-effort conversion of LLM-provided date strings to a date.
+
+    LLMs asked for an ISO date sometimes still hand back natural language
+    like '30 days ago' or 'today' instead of computing the exact date
+    themselves. Rather than hard-failing validation (and silently dropping
+    to the rule-based fallback), normalize the common relative phrases and
+    fall back to a fuzzy absolute-date parse for everything else.
+    """
+    if value is None or isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip().lower()
+    if not text:
+        return None
+
+    if text in {"today", "now"}:
+        return date.today()
+    if text == "yesterday":
+        return date.today() - timedelta(days=1)
+    if text == "tomorrow":
+        return date.today() + timedelta(days=1)
+
+    match = _RELATIVE_PATTERN.match(text)
+    if match:
+        amount = int(match.group(1))
+        unit = match.group(2).lower()
+        return date.today() - timedelta(days=amount * _RELATIVE_UNIT_DAYS[unit])
+
+    try:
+        return dateutil_parser.parse(value, default=datetime(1900, 1, 1)).date()
+    except (ValueError, OverflowError):
+        # Give up gracefully rather than raising - an unparseable date
+        # filter becomes "no filter" instead of crashing the whole query.
+        return None
 
 
 class AMLPattern(str, Enum):
@@ -63,6 +120,11 @@ class QueryFilters(BaseModel):
         default=None,
         description="For aggregation-style queries, e.g. 'accounts with 10+ transactions'.",
     )
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def _normalize_date(cls, value: object) -> object:
+        return _coerce_to_date(value)
 
 
 class ParsedIntent(BaseModel):
