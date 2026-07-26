@@ -38,6 +38,7 @@ def test_falls_back_when_client_raises():
 
     # Should not raise, and should have used the rule-based path instead
     assert result.supporting_metrics["used_fallback"] is True
+    assert "simulated API failure" in result.supporting_metrics["fallback_reason"]
     assert len(result.plan.steps) > 0
 
 
@@ -48,6 +49,7 @@ def test_uses_rule_based_directly_when_no_client_and_no_api_key(monkeypatch):
     result = agent.handle_query("Find suspicious activity in the last 30 days")
 
     assert result.supporting_metrics["used_fallback"] is True
+    assert "No API key" in result.supporting_metrics["fallback_reason"]
     assert agent._llm is None
 
 

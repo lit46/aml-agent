@@ -25,17 +25,23 @@ class AMLAgent:
         data_store: DataStore,
         client: Any | None = None,
         api_key: str | None = None,
+        model: str | None = None,
     ) -> None:
         """
         Args:
             data_store: shared data access layer.
-            client: an already-constructed Anthropic-compatible client
-                (mainly for tests). Takes priority over `api_key` and
-                `.env` if provided.
+            client: an already-constructed client matching the Anthropic
+                Messages API shape (mainly for tests, or for a non-Anthropic
+                provider via OpenAICompatibleClient). Takes priority over
+                `api_key` and `.env` if provided.
             api_key: an explicit API key to use for this session — lets a
                 UI (e.g. Streamlit) pass in a key a user typed at runtime,
                 without requiring it to be written to .env. Falls back to
-                settings.anthropic_api_key (from .env) if not given.
+                settings.anthropic_api_key (from .env) if not given. Only
+                used when `client` is not provided (i.e. the Anthropic path).
+            model: explicit model name to use. Required when `client` is a
+                non-Anthropic provider, since the default
+                (settings.claude_model) is an Anthropic-specific name.
         """
         self._data_store = data_store
         self._rule_based = RuleBasedOrchestrator(data_store)
@@ -44,13 +50,15 @@ class AMLAgent:
         resolved_key = api_key or settings.anthropic_api_key
 
         if client is not None:
-            self._llm = LLMOrchestrator(data_store, client=client)
+            self._llm = LLMOrchestrator(data_store, client=client, model=model)
         elif resolved_key:
             try:
                 from anthropic import Anthropic
 
                 self._llm = LLMOrchestrator(
-                    data_store, client=Anthropic(api_key=resolved_key)
+                    data_store,
+                    client=Anthropic(api_key=resolved_key),
+                    model=model,
                 )
             except Exception:
                 self._llm = None
@@ -59,8 +67,18 @@ class AMLAgent:
         if self._llm is not None:
             try:
                 return self._llm.handle_query(query)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
                 # Any API/network failure at query time — fall back rather
-                # than crash. This is the resilience path for judging.
-                pass
-        return self._rule_based.handle_query(query)
+                # than crash, but surface *why* so the user can diagnose it
+                # (invalid key, no credits, rate limit, etc.) instead of
+                # silently wondering if the LLM path ever ran at all.
+                result = self._rule_based.handle_query(query)
+                result.supporting_metrics["fallback_reason"] = (
+                    f"{type(exc).__name__}: {exc}"
+                )
+                return result
+        result = self._rule_based.handle_query(query)
+        result.supporting_metrics["fallback_reason"] = (
+            "No API key available (neither an explicit key nor .env was set)."
+        )
+        return result
