@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Environment secrets
+.env
+
+# Raw/large dataset files — never commit these
+raw/
+*.zip
+HI-Medium_Trans.csv
+HI-Medium_accounts.csv
+HI-Medium_Patterns.txt
+
+# OS/editor junk
+.DS_Store
+.vscode/
+.idea/
