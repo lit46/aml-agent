@@ -8,6 +8,7 @@ Claude API behavior — that must be checked manually with a real key
 run against real fixture data and produce correct results.
 """
 
+import json
 from pathlib import Path
 
 from app.agents.llm_orchestrator import LLMOrchestrator
@@ -118,6 +119,64 @@ def test_relative_date_filters_do_not_trigger_fallback():
     assert result.execution_summary == "Analyzed last 30 days."
     assert result.supporting_metrics["used_fallback"] is False
     assert "fallback_reason" not in result.supporting_metrics
+
+
+def test_large_tool_results_are_summarized_before_reaching_the_llm():
+    """Regression test: tool results (e.g. feature_engineering_tool on an
+    unfiltered query) can contain one record per account. On the real
+    ~95k-account dataset that serialized to 30+ MB and blew past Groq's
+    request size limit with a 413 Payload Too Large, since the full list
+    was echoed back into the conversation on every turn. The LLM never
+    needs the raw list -- pipeline_state already threads full data between
+    tool calls -- so results sent to the LLM must stay small regardless of
+    dataset size."""
+    from app.agents.llm_orchestrator import _summarize_for_llm
+    from app.schemas import ToolResult
+
+    huge_result = ToolResult(
+        tool="feature_engineering_tool",
+        success=True,
+        data={
+            "account_features": [{"account_id": f"ACC-{i}"} for i in range(50_000)],
+            "account_count": 50_000,
+        },
+    )
+
+    summarized = _summarize_for_llm(huge_result)
+    payload_size = len(json.dumps(summarized))
+
+    assert payload_size < 5_000, f"summarized payload too large: {payload_size} bytes"
+    assert summarized["data"]["account_features"]["total_count"] == 50_000
+    assert len(summarized["data"]["account_features"]["sample"]) == 5
+
+
+def test_multi_step_pipeline_still_produces_correct_final_response_after_summarization():
+    """The summarization above must only affect what's echoed back to the
+    LLM mid-conversation -- the final AgentResponse (built from
+    pipeline_state, not from the summarized tool_result) must still be
+    built from the real, full data."""
+    client = ScriptedClient(
+        [
+            fake_response(
+                [tool_use_block("feature_engineering_tool", {"reason": "broad query"}, "t1")]
+            ),
+            fake_response(
+                [tool_use_block("anomaly_detection_tool", {"reason": "score accounts"}, "t2")]
+            ),
+            fake_response(
+                [tool_use_block("risk_classification_tool", {"reason": "classify"}, "t3")]
+            ),
+            fake_response([tool_use_block("explanation_tool", {"reason": "explain"}, "t4")]),
+            fake_response([text_block("Analysis complete across all accounts.")]),
+        ]
+    )
+    orchestrator = _make_orchestrator(client)
+    result = orchestrator.handle_query("Find suspicious activity")
+
+    # Same assertion as the pre-existing multi-step test: full fixture data
+    # (9 accounts) still threads correctly end to end despite the LLM-facing
+    # tool results now being summarized.
+    assert len(orchestrator._pipeline_state["account_features"]) == 9
 
 
 def test_stops_after_max_turns_if_no_final_answer():

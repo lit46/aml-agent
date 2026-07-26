@@ -21,6 +21,41 @@ from app.config import settings
 from app.schemas import AgentResponse, ToolName
 from app.services.data_loader import DataStore
 
+# Tool results can contain one record per account (e.g. account_features,
+# anomaly_scores) — on an unfiltered query over the full ~95k-account
+# dataset that's tens of thousands of JSON objects. The LLM never needs to
+# see that raw data (BaseOrchestrator already threads it between tool
+# calls internally via pipeline_state), it only needs enough to decide the
+# next step and write a final summary. Sending the full list back into the
+# conversation on every turn made the payload grow each turn until
+# providers with tighter request-size limits (e.g. Groq) started rejecting
+# it with a 413.
+_MAX_ITEMS_PER_LIST = 5
+
+
+def _summarize_for_llm(result: Any) -> dict[str, Any]:
+    """Cap any large list fields in a tool result before it goes back to the LLM."""
+    dumped = result.model_dump()
+    data = dumped.get("data")
+    if isinstance(data, dict):
+        summarized_data = {}
+        for key, value in data.items():
+            if isinstance(value, list) and len(value) > _MAX_ITEMS_PER_LIST:
+                summarized_data[key] = {
+                    "total_count": len(value),
+                    "sample": value[:_MAX_ITEMS_PER_LIST],
+                    "note": (
+                        f"{len(value)} items total; showing first "
+                        f"{_MAX_ITEMS_PER_LIST} only. Full results are "
+                        "already available to the final response."
+                    ),
+                }
+            else:
+                summarized_data[key] = value
+        dumped["data"] = summarized_data
+    return dumped
+
+
 SYSTEM_PROMPT_TEMPLATE = """You are an AML (Anti-Money Laundering) investigation agent.
 
 Today's date is {today}. When a query mentions a relative time window
@@ -98,7 +133,7 @@ class LLMOrchestrator(BaseOrchestrator):
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result.model_dump()),
+                        "content": json.dumps(_summarize_for_llm(result)),
                     }
                 )
             messages.append({"role": "user", "content": tool_result_content})

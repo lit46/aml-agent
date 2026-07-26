@@ -44,6 +44,15 @@ git push
   now accepts natural-language dates like "30 days ago" / "today" and
   converts them to real dates instead of raising a `ValidationError` and
   silently dropping into rule-based fallback mode.
+- **413 Payload Too Large** (found after the date fix, on real full-scale
+  data): `app/agents/llm_orchestrator.py` was echoing the *full* result of
+  every tool call (one record per account) back into the conversation on
+  every turn. On the real ~95k-account dataset, a single unfiltered
+  `feature_engineering_tool` call serialized to **32 MB** — a size no LLM
+  provider's request limit will accept. Added `_summarize_for_llm()`,
+  which caps large list fields to a 5-item sample + total count before
+  they're sent to the LLM. The full data still flows correctly into the
+  final response via `pipeline_state`, which was never touched by this bug.
 - `app/agents/llm_orchestrator.py`: the system prompt now tells the LLM
   today's actual date, so it computes correct ISO dates itself instead of
   guessing — this is the root-cause fix, the schema change above is the
